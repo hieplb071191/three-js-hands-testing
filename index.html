@@ -1,26 +1,59 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>MediaPipe + Three.js Gesture</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Hand Gesture Mobile</title>
   <style>
-    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    body { margin: 0; overflow: hidden; background: #000; position: fixed; width: 100%; height: 100%; }
     canvas { display: block; }
-    #info {
-      position: absolute; top: 10px; left: 10px;
-      background: rgba(0,0,0,0.7); color: white;
-      padding: 15px; border-radius: 8px; z-index: 100;
+
+    /* Khung Camera nhỏ tối ưu cho Mobile */
+    #webcam-container {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 120px; /* Nhỏ hơn trên mobile */
+      height: 160px;
+      border: 2px solid #00ff88;
+      border-radius: 8px;
+      overflow: hidden;
+      z-index: 10;
     }
-    video { display: none; } /* Ẩn video gốc */
+
+    #webcam { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+
+    /* Bảng thông tin gọn nhẹ */
+    #info {
+      position: absolute; bottom: 30px; left: 0; right: 0;
+      text-align: center; color: white; z-index: 100;
+      pointer-events: none;
+    }
+
+    .status-badge {
+      display: inline-block;
+      background: rgba(0, 255, 136, 0.2);
+      backdrop-filter: blur(5px);
+      border: 1px solid #00ff88;
+      padding: 10px 20px;
+      border-radius: 30px;
+      font-family: sans-serif;
+    }
+
+    h2 { margin: 0; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 1px; }
   </style>
 </head>
 <body>
 
   <div id="info">
-    <h2 id="gesture-text">Đang khởi tạo...</h2>
-    <p>Giơ 2 ngón (Victory) hoặc Ngón cái (Thumbs Up)</p>
+    <div class="status-badge">
+      <h2 id="gesture-text">Đang khởi động...</h2>
+    </div>
   </div>
 
-  <video id="webcam" autoplay playsinline></video>
+  <div id="webcam-container">
+    <video id="webcam" autoplay playsinline></video>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -30,82 +63,66 @@
     const videoElement = document.getElementById('webcam');
     const gestureText = document.getElementById('gesture-text');
 
-    // --- CẤU HÌNH THREE.JS ---
+    // --- THREE.JS OPTIMIZATION ---
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true }); // Tắt antialias để mượt hơn trên mobile
+    renderer.setPixelRatio(window.devicePixelRatio > 2 ? 2 : window.devicePixelRatio); // Giới hạn pixel ratio để nhẹ GPU
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Tạo một khối lập phương để phản hồi theo tay
-    const geometry = new THREE.BoxGeometry();
-    const material = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
-    const cube = new THREE.Mesh(geometry, material);
-    scene.add(cube);
+    const geometry = new THREE.IcosahedronGeometry(1.2, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x00ff88, wireframe: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
 
-    const light = new THREE.PointLight(0xffffff, 1, 100);
-    light.position.set(10, 10, 10);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(1, 1, 2);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0x404040));
 
-    camera.position.z = 5;
+    camera.position.z = 4;
 
-    // --- LOGIC NHẬN DIỆN CỬ CHỈ ---
+    // --- GESTURE LOGIC ---
     function detectGesture(landmarks) {
+      const getDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      
       const thumbTip = landmarks[4];
-      const thumbIp = landmarks[3];
       const indexTip = landmarks[8];
       const indexPip = landmarks[6];
       const middleTip = landmarks[12];
       const middlePip = landmarks[10];
       const ringTip = landmarks[16];
-      const ringPip = landmarks[14];
       const pinkyTip = landmarks[20];
-      const pinkyPip = landmarks[18];
 
-      // Kiểm tra ngón trỏ và giữa có mở không (y nhỏ hơn là cao hơn trên màn hình)
-      const isIndexOpen = indexTip.y < indexPip.y;
-      const isMiddleOpen = middleTip.y < middlePip.y;
-      const isRingClosed = ringTip.y > ringPip.y;
-      const isPinkyClosed = pinkyTip.y > pinkyPip.y;
+      // Victory: Trỏ và Giữa duỗi (y của tip thấp hơn pip), các ngón khác gập
+      const isVictory = indexTip.y < indexPip.y && middleTip.y < middlePip.y && ringTip.y > landmarks[14].y;
+      
+      // Thumbs Up: Ngón cái cao hơn hẳn các ngón khác
+      const isThumbsUp = thumbTip.y < landmarks[2].y && indexTip.y > indexPip.y;
 
-      // 1. Victory: Trỏ & Giữa mở, Nhẫn & Út đóng
-      if (isIndexOpen && isMiddleOpen && isRingClosed && isPinkyClosed) {
-        return "VICTORY";
-      }
-
-      // 2. Thumbs Up: Ngón cái cao hơn các ngón khác và hướng lên
-      const isThumbUp = thumbTip.y < thumbIp.y && thumbTip.y < indexTip.y;
-      const areFingersClosed = indexTip.x > indexPip.x || indexTip.y > indexPip.y; 
-      if (isThumbUp && isRingClosed && isPinkyClosed) {
-        return "THUMBS_UP";
-      }
-
-      return "NONE";
+      if (isVictory) return "VICTORY ✌️";
+      if (isThumbsUp) return "LIKE 👍";
+      return "TRACKING...";
     }
 
-    // --- CẤU HÌNH MEDIAPIPE ---
+    // --- MEDIAPIPE OPTIMIZATION ---
     function onResults(results) {
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        const landmarks = results.multiHandLandmarks[0];
-        const gesture = detectGesture(landmarks);
+        const gesture = detectGesture(results.multiHandLandmarks[0]);
+        gestureText.innerText = gesture;
 
-        gestureText.innerText = "Gesture: " + gesture;
-
-        // Phản hồi Three.js
-        if (gesture === "VICTORY") {
-          cube.rotation.y += 0.05;
-          cube.material.color.setHex(0x0000ff); // Màu xanh dương
-        } else if (gesture === "THUMBS_UP") {
-          cube.scale.set(1.5, 1.5, 1.5);
-          cube.material.color.setHex(0xff0000); // Màu đỏ
+        if (gesture.includes("VICTORY")) {
+          mesh.rotation.y += 0.1;
+          mesh.material.color.setHex(0x00ffff);
+        } else if (gesture.includes("LIKE")) {
+          mesh.scale.set(1.5, 1.5, 1.5);
+          mesh.material.color.setHex(0xff0055);
         } else {
-          cube.scale.set(1, 1, 1);
-          cube.material.color.setHex(0x00ff88); // Màu mặc định
-          cube.rotation.y += 0.01;
+          mesh.scale.set(1, 1, 1);
+          mesh.material.color.setHex(0x00ff88);
+          mesh.rotation.y += 0.02;
         }
-      } else {
-        gestureText.innerText = "Không tìm thấy tay";
       }
       renderer.render(scene, camera);
     }
@@ -116,23 +133,21 @@
 
     hands.setOptions({
       maxNumHands: 1,
-      modelComplexity: 1,
+      modelComplexity: 0, // 0 = Nhanh hơn, 1 = Chính xác hơn (Chọn 0 cho mobile)
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5
     });
-
     hands.onResults(onResults);
 
     const cameraUtils = new Camera(videoElement, {
       onFrame: async () => {
         await hands.send({ image: videoElement });
       },
-      width: 640,
-      height: 480
+      width: 480, height: 640 // Tỉ lệ dọc cho mobile
     });
     cameraUtils.start();
 
-    // Xử lý resize trình duyệt
+    // Responsive
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
