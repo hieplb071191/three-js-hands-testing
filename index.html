@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MediaPipe + Three.js Gesture</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    canvas { display: block; }
+    #info {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.7); color: white;
+      padding: 15px; border-radius: 8px; z-index: 100;
+    }
+    video { display: none; } /* Ẩn video gốc */
+  </style>
+</head>
+<body>
+
+  <div id="info">
+    <h2 id="gesture-text">Đang khởi tạo...</h2>
+    <p>Giơ 2 ngón (Victory) hoặc Ngón cái (Thumbs Up)</p>
+  </div>
+
+  <video id="webcam" autoplay playsinline></video>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const gestureText = document.getElementById('gesture-text');
+
+    // --- CẤU HÌNH THREE.JS ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Tạo một khối lập phương để phản hồi theo tay
+    const geometry = new THREE.BoxGeometry();
+    const material = new THREE.MeshStandardMaterial({ color: 0x00ff88 });
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    const light = new THREE.PointLight(0xffffff, 1, 100);
+    light.position.set(10, 10, 10);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x404040));
+
+    camera.position.z = 5;
+
+    // --- LOGIC NHẬN DIỆN CỬ CHỈ ---
+    function detectGesture(landmarks) {
+      const thumbTip = landmarks[4];
+      const thumbIp = landmarks[3];
+      const indexTip = landmarks[8];
+      const indexPip = landmarks[6];
+      const middleTip = landmarks[12];
+      const middlePip = landmarks[10];
+      const ringTip = landmarks[16];
+      const ringPip = landmarks[14];
+      const pinkyTip = landmarks[20];
+      const pinkyPip = landmarks[18];
+
+      // Kiểm tra ngón trỏ và giữa có mở không (y nhỏ hơn là cao hơn trên màn hình)
+      const isIndexOpen = indexTip.y < indexPip.y;
+      const isMiddleOpen = middleTip.y < middlePip.y;
+      const isRingClosed = ringTip.y > ringPip.y;
+      const isPinkyClosed = pinkyTip.y > pinkyPip.y;
+
+      // 1. Victory: Trỏ & Giữa mở, Nhẫn & Út đóng
+      if (isIndexOpen && isMiddleOpen && isRingClosed && isPinkyClosed) {
+        return "VICTORY";
+      }
+
+      // 2. Thumbs Up: Ngón cái cao hơn các ngón khác và hướng lên
+      const isThumbUp = thumbTip.y < thumbIp.y && thumbTip.y < indexTip.y;
+      const areFingersClosed = indexTip.x > indexPip.x || indexTip.y > indexPip.y; 
+      if (isThumbUp && isRingClosed && isPinkyClosed) {
+        return "THUMBS_UP";
+      }
+
+      return "NONE";
+    }
+
+    // --- CẤU HÌNH MEDIAPIPE ---
+    function onResults(results) {
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        const gesture = detectGesture(landmarks);
+
+        gestureText.innerText = "Gesture: " + gesture;
+
+        // Phản hồi Three.js
+        if (gesture === "VICTORY") {
+          cube.rotation.y += 0.05;
+          cube.material.color.setHex(0x0000ff); // Màu xanh dương
+        } else if (gesture === "THUMBS_UP") {
+          cube.scale.set(1.5, 1.5, 1.5);
+          cube.material.color.setHex(0xff0000); // Màu đỏ
+        } else {
+          cube.scale.set(1, 1, 1);
+          cube.material.color.setHex(0x00ff88); // Màu mặc định
+          cube.rotation.y += 0.01;
+        }
+      } else {
+        gestureText.innerText = "Không tìm thấy tay";
+      }
+      renderer.render(scene, camera);
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    const cameraUtils = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 640,
+      height: 480
+    });
+    cameraUtils.start();
+
+    // Xử lý resize trình duyệt
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
